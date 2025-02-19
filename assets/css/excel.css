@@ -1,0 +1,52 @@
+/* home.css */
+
+/* Container to wrap the home page dashboard elements */
+#home-dashboard {
+    padding: 20px;
+    background-color: #fff;
+    border-radius: 5px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    margin: 20px auto;
+    max-width: 1200px;
+}
+
+/* Header styles within the dashboard */
+#home-dashboard h1 {
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+#home-dashboard h3 {
+    margin-top: 40px;
+    color: #333;
+}
+
+/* Table styles */
+#home-dashboard table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 30px;
+}
+
+#home-dashboard th,
+#home-dashboard td {
+    border: 1px solid #ddd;
+    padding: 10px;
+    text-align: left;
+}
+
+#home-dashboard th {
+    background-color: #56ab2f;
+    color: #fff;
+    font-weight: bold;
+}
+
+/* Zebra stripes for table rows */
+#home-dashboard tr:nth-child(even) {
+    background-color: #f2f2f2;
+}
+
+/* Hover effect for table rows */
+#home-dashboard tr:hover {
+    background-color: #ddd;
+}

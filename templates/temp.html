@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Parking Slot Booking</title>
+  <style>
+    /* Global Styles */
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #f4f4f4;
+      margin: 0;
+      padding: 0;
+    }
+    .container {
+      width: 80%;
+      margin: auto;
+      overflow: hidden;
+      padding: 20px;
+    }
+    .service {
+      padding: 40px 0;
+    }
+    .service-content {
+      text-align: center;
+    }
+    /* Slots Container */
+    #slots {
+      margin-top: 20px;
+    }
+    /* Slot Styles */
+    .slot {
+      display: inline-block;
+      width: 100px;
+      height: 100px;
+      margin: 10px;
+      text-align: center;
+      line-height: 100px;
+      border: 2px solid #333;
+      border-radius: 5px;
+      font-weight: bold;
+      color: #fff;
+      transition: background-color 0.3s ease;
+    }
+    .slot.available {
+      background-color: green;
+    }
+    .slot.occupied {
+      background-color: red;
+    }
+  </style>
+</head>
+<body>
+  <section id="service" class="service">
+    <div class="container">
+      <div class="service-content">
+        <h2>Parking Slot Booking</h2>
+        <!-- This div will hold the parking slots -->
+        <div id="slots"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Firebase SDKs using ES Modules -->
+  <script type="module">
+    // Import the necessary functions from Firebase v11.3.1
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.3.1/firebase-app.js";
+    import { getAnalytics } from "https://www.gstatic.com/firebasejs/11.3.1/firebase-analytics.js";
+    import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/11.3.1/firebase-database.js";
+    
+    // Your Firebase configuration (replace with your actual config)
+    const firebaseConfig = {
+      apiKey: "AIzaSyA3_Q1LisISR0-Yzaoh_oEowVZeSc6nfcI",
+      authDomain: "parking-77f66.firebaseapp.com",
+      projectId: "parking-77f66",
+      storageBucket: "parking-77f66.firebasestorage.app",
+      messagingSenderId: "714680793644",
+      appId: "1:714680793644:web:4be138b5a85c22671bef89",
+      measurementId: "G-M0FKSBFKZK"
+    };
+    
+    // Initialize Firebase
+    const appFirebase = initializeApp(firebaseConfig);
+    const analytics = getAnalytics(appFirebase);
+    const database = getDatabase(appFirebase);
+    
+    // Reference to the 'slots' node in your Firebase Realtime Database
+    const slotsRef = ref(database, 'slots');
+    
+    // Function to render the parking slots
+    function renderSlots(slotsData) {
+      const slotsDiv = document.getElementById('slots');
+      slotsDiv.innerHTML = ""; // Clear existing content
+      
+      // Loop through your slots (assuming keys: "sloth1" to "sloth6")
+      for (let i = 1; i <= 6; i++) {
+        const slotKey = 'sloth' + i;
+        const status = slotsData[slotKey]; // 0 for available, 1 for occupied
+        
+        const slotElement = document.createElement('div');
+        slotElement.classList.add('slot');
+        slotElement.textContent = 'Slot ' + i;
+        
+        // Add appropriate class based on slot status
+        if (status === 0) {
+          slotElement.classList.add('available');
+        } else {
+          slotElement.classList.add('occupied');
+        }
+        
+        slotsDiv.appendChild(slotElement);
+      }
+    }
+    
+    // Listen for realtime updates to the slots data
+    onValue(slotsRef, (snapshot) => {
+      const slotsData = snapshot.val();
+      if (slotsData) {
+        renderSlots(slotsData);
+      }
+    });
+  </script>
+
+  <!-- Example of additional Flask integration -->
+  <script>
+    // If you need a Flask URL for additional functionality
+    const parkUrl = "{{ url_for('park') }}";
+  </script>
+  <!-- Optionally include other JS files -->
+  <script src="{{ url_for('static', filename='js/sloth.js') }}"></script>
+</body>
+</html>

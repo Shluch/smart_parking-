@@ -1,0 +1,263 @@
+import streamlit as st
+import cv2
+import numpy as np
+import pickle
+import os
+from PIL import Image
+import time
+import csv
+
+# -----------------------------
+# Database and CSV Functions
+# -----------------------------
+DB_FILE = os.path.abspath("face_db.pkl")
+EVENT_CSV_FILE = os.path.abspath("parking_log.csv")
+REGISTERED_USERS_CSV = os.path.abspath("registered_users.csv")
+MAX_SLOTS = 100
+
+def load_database(db_file=DB_FILE):
+    try:
+        if os.path.exists(db_file):
+            with open(db_file, "rb") as f:
+                return pickle.load(f)
+        else:
+            return []
+    except Exception as e:
+        st.error(f"Error loading database: {e}")
+        return []
+
+def save_database(db, db_file=DB_FILE):
+    try:
+        with open(db_file, "wb") as f:
+            pickle.dump(db, f)
+    except Exception as e:
+        st.error(f"Error saving database: {e}")
+
+def get_next_id(db):
+    return max(entry['id'] for entry in db) + 1 if db else 1
+
+def get_next_slot(db, max_slots=MAX_SLOTS):
+    """Return the next available parking slot (1..max_slots)
+       among currently parked vehicles (those with exit_time == None)."""
+    used_slots = {entry.get("slot", 0) for entry in db if entry.get("exit_time") is None}
+    slot = 1
+    while slot in used_slots and slot <= max_slots:
+        slot += 1
+    return None if slot > max_slots else slot
+
+def train_recognizer(db):
+    active_entries = [entry for entry in db if 'face' in entry]
+    if not active_entries:
+        return None
+    try:
+        images = [entry['face'] for entry in active_entries]
+        labels = [entry['id'] for entry in active_entries]
+        recognizer = cv2.face.LBPHFaceRecognizer_create()
+        recognizer.train(images, np.array(labels))
+        return recognizer
+    except Exception as e:
+        st.error(f"Error training recognizer: {e}")
+        return None
+
+def log_event(event_details, csv_file=EVENT_CSV_FILE):
+    """
+    Log an event (entry or exit) to a CSV file.
+    event_details is a dict with keys: id, name, phone, adhaar, vehicle, slot, event_type, event_time.
+    """
+    file_exists = os.path.exists(csv_file)
+    try:
+        with open(csv_file, mode="a", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=["id", "name", "phone", "adhaar", "vehicle", "slot", "event_type", "event_time"])
+            if not file_exists:
+                writer.writeheader()
+            writer.writerow(event_details)
+    except Exception as e:
+        st.error(f"Error logging event to CSV: {e}")
+
+def log_registered_user(user_details, csv_file=REGISTERED_USERS_CSV):
+    """
+    Log a new registration to a CSV file of all registered users.
+    user_details is a dict with keys: id, name, phone, adhaar, vehicle, registration_time.
+    """
+    file_exists = os.path.exists(csv_file)
+    try:
+        with open(csv_file, mode="a", newline="") as f:
+            fieldnames = ["id", "name", "phone", "adhaar", "vehicle", "registration_time"]
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            if not file_exists:
+                writer.writeheader()
+            writer.writerow({
+                "id": user_details.get("id"),
+                "name": user_details.get("name"),
+                "phone": user_details.get("phone"),
+                "adhaar": user_details.get("adhaar"),
+                "vehicle": user_details.get("vehicle"),
+                "registration_time": user_details.get("entry_time")
+            })
+    except Exception as e:
+        st.error(f"Error logging registered user to CSV: {e}")
+
+# Initialize database and recognizer
+face_db = load_database()
+recognizer = train_recognizer(face_db)
+
+# -----------------------------
+# Streamlit App Layout
+# -----------------------------
+st.title("Parking System with Face Recognition & CSV Logs")
+
+st.write(f"Registered Users: {len(face_db)}")
+active_count = len([e for e in face_db if e.get("exit_time") is None])
+st.write(f"Active Parked Vehicles: {active_count} / {MAX_SLOTS}")
+st.write(f"Database Path: `{DB_FILE}`")
+st.write(f"Event CSV Log: `{EVENT_CSV_FILE}`")
+st.write(f"Registered Users CSV: `{REGISTERED_USERS_CSV}`")
+
+img_file = st.camera_input("Capture your image")
+
+if img_file is not None:
+    file_bytes = np.asarray(bytearray(img_file.read()), dtype=np.uint8)
+    image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+    st.image(image, channels="BGR", caption="Captured Image")
+    
+    # Face Detection using Haar Cascade
+    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5)
+    
+    if len(faces) == 0:
+        st.error("No face detected. Please try again.")
+    else:
+        (x, y, w, h) = faces[0]
+        face_roi = cv2.resize(gray[y:y+h, x:x+w], (200, 200))
+        st.image(face_roi, caption="Detected Face (Grayscale)")
+        
+        recognized = False
+        threshold = 50  # Adjust as needed
+        recognized_entry = None
+        if recognizer is not None:
+            try:
+                label, confidence = recognizer.predict(face_roi)
+                st.write(f"Confidence: {confidence:.2f} (Threshold: {threshold})")
+                if confidence < threshold:
+                    recognized_entry = next((e for e in face_db if e['id'] == label), None)
+                    if recognized_entry:
+                        recognized = True
+            except Exception as e:
+                st.error(f"Recognition error: {e}")
+        
+        current_time = time.strftime("%Y-%m-%d %H:%M:%S")
+        
+        if recognized:
+            st.success("Face recognized! Here are your details:")
+            st.write(f"Name: {recognized_entry.get('name', 'N/A')}")
+            st.write(f"Phone: {recognized_entry.get('phone', 'N/A')}")
+            st.write(f"Adhaar: {recognized_entry.get('adhaar', 'N/A')}")
+            st.write(f"Vehicle: {recognized_entry.get('vehicle', 'N/A')}")
+            st.write(f"Parking Slot: {recognized_entry.get('slot', 'N/A')}")
+            st.write(f"Entry Time: {recognized_entry.get('entry_time', 'N/A')}")
+            st.write(f"Exit Time: {recognized_entry.get('exit_time', 'Not recorded')}")
+            
+            action = st.radio("Select Action:", options=["Entry", "Exit"])
+            if st.button("Submit Action"):
+                if action == "Entry":
+                    # Allow re-entry if the user has previously exited.
+                    if recognized_entry.get("exit_time") is None:
+                        st.error("User is currently parked. Please exit before re-entering.")
+                    else:
+                        new_slot = get_next_slot(face_db)
+                        if new_slot is None:
+                            st.error("Parking Full! Cannot assign new slot.")
+                        else:
+                            recognized_entry["entry_time"] = current_time
+                            recognized_entry["exit_time"] = None
+                            recognized_entry["slot"] = new_slot
+                            save_database(face_db)
+                            recognizer = train_recognizer(face_db)
+                            st.success(f"Entry recorded for {recognized_entry['name']}. New slot assigned: {new_slot}.")
+                            log_event({
+                                "id": recognized_entry["id"],
+                                "name": recognized_entry["name"],
+                                "phone": recognized_entry["phone"],
+                                "adhaar": recognized_entry["adhaar"],
+                                "vehicle": recognized_entry["vehicle"],
+                                "slot": new_slot,
+                                "event_type": "entry",
+                                "event_time": current_time
+                            })
+                elif action == "Exit":
+                    # Allow exit if user is currently parked.
+                    if recognized_entry.get("exit_time") is not None:
+                        st.error("User has already exited. Cannot record exit again without a new entry.")
+                    else:
+                        recognized_entry["exit_time"] = current_time
+                        save_database(face_db)
+                        recognizer = train_recognizer(face_db)
+                        st.success(f"Exit recorded for {recognized_entry['name']} at {current_time}.")
+                        log_event({
+                            "id": recognized_entry["id"],
+                            "name": recognized_entry["name"],
+                            "phone": recognized_entry["phone"],
+                            "adhaar": recognized_entry["adhaar"],
+                            "vehicle": recognized_entry["vehicle"],
+                            "slot": recognized_entry["slot"],
+                            "event_type": "exit",
+                            "event_time": current_time
+                        })
+        else:
+            st.info("Face not recognized. Please register as a new user.")
+            if "register_mode" not in st.session_state:
+                st.session_state["register_mode"] = False
+            if st.button("Register New Vehicle"):
+                st.session_state["register_mode"] = True
+            if st.session_state["register_mode"]:
+                with st.form("register_form"):
+                    st.write("Register your Parking Details")
+                    name    = st.text_input("Name (Required)")
+                    phone   = st.text_input("Phone No (Required)")
+                    adhaar  = st.text_input("Adhaar No (Required)")
+                    vehicle = st.text_input("Vehicle No (Required)")
+                    slot = get_next_slot(face_db)
+                    if slot is None:
+                        st.error("Parking Full! No slots available.")
+                    else:
+                        st.write(f"Assigned Parking Slot: {slot}")
+                    submitted = st.form_submit_button("Submit Registration")
+                    if submitted:
+                        if not (name and phone and adhaar and vehicle):
+                            st.error("All fields are required!")
+                        elif slot is None:
+                            st.error("Parking Full! Cannot register new vehicle.")
+                        else:
+                            new_entry = {
+                                "id": get_next_id(face_db),
+                                "name": name,
+                                "phone": phone,
+                                "adhaar": adhaar,
+                                "vehicle": vehicle,
+                                "slot": slot,
+                                "entry_time": current_time,
+                                "exit_time": None,
+                                "face": face_roi
+                            }
+                            face_db.append(new_entry)
+                            save_database(face_db)
+                            try:
+                                recognizer = train_recognizer(face_db)
+                                st.success("Registration successful! Recognizer updated and database saved.")
+                                st.write(f"Database file: `{DB_FILE}`")
+                                st.session_state["register_mode"] = False
+                                log_event({
+                                    "id": new_entry["id"],
+                                    "name": new_entry["name"],
+                                    "phone": new_entry["phone"],
+                                    "adhaar": new_entry["adhaar"],
+                                    "vehicle": new_entry["vehicle"],
+                                    "slot": new_entry["slot"],
+                                    "event_type": "entry",
+                                    "event_time": current_time
+                                })
+                                # Log the registration event to the registered users CSV.
+                                log_registered_user(new_entry)
+                            except Exception as e:
+                                st.error(f"Failed to update recognizer: {e}")

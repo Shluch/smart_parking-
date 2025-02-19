@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Parking Entry</title>
+    <style>
+        .green-button {
+            background-color: green;
+            color: white;
+            padding: 15px 30px;
+            font-size: 16px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        video {
+            border: 1px solid #ccc;
+        }
+    </style>
+</head>
+<body>
+    <h1>Parking Entry</h1>
+    <video id="video" width="640" height="480" autoplay></video>
+    <canvas id="canvas" width="640" height="480" style="display: none;"></canvas>
+    <br><br>
+    <button class="green-button" id="logEntryBtn">Log Entry</button>
+
+    <script>
+        // Retrieve the 'slot' parameter from the URL query string.
+        const urlParams = new URLSearchParams(window.location.search);
+        const slotNumber = urlParams.get("slot") || "";
+
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const logEntryBtn = document.getElementById('logEntryBtn');
+
+        // Request access to the webcam.
+        navigator.mediaDevices.getUserMedia({ video: true })
+            .then(function(stream) {
+                video.srcObject = stream;
+                video.play();
+            })
+            .catch(function(err) {
+                console.error("Error accessing the camera: " + err);
+            });
+
+        logEntryBtn.addEventListener('click', function() {
+            // Capture the current frame from the video stream.
+            const context = canvas.getContext('2d');
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+            
+            // Get the image as a base64 encoded string (JPEG).
+            const dataURL = canvas.toDataURL('image/jpeg');
+            // Remove the data URL prefix to get just the Base64 encoded string.
+            const base64Image = dataURL.replace(/^data:image\/jpeg;base64,/, "");
+            
+            // Send the captured image and the selected slot number to the server.
+            fetch('/log_entry', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                },
+                body: 'face_data=' + encodeURIComponent(base64Image) +
+                      '&slot=' + encodeURIComponent(slotNumber)
+            })
+            .then(response => {
+                if (response.redirected) {
+                    window.location.href = response.url;
+                }
+                return response.text();
+            })
+            .then(data => {
+                console.log(data);
+            })
+            .catch(error => {
+                console.error('Error:', error);
+            });
+        });
+    </script>
+</body>
+</html>
