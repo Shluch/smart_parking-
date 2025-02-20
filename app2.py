@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
+from flask import Flask, render_template, request, redirect, url_for, flash, Response
 import cv2
 import numpy as np
 import pickle
@@ -6,6 +6,7 @@ import os
 import time
 import csv
 import base64
+import urllib.request
 
 import firebase_admin
 from firebase_admin import credentials, db
@@ -18,7 +19,6 @@ firebase_admin.initialize_app(cred, {
 
 app = Flask(__name__, static_folder="assets")
 app.secret_key = "your_secret_key_here"  # Change this to your secret key
-
 
 # -----------------------------
 # Configuration and Helper Functions
@@ -34,9 +34,7 @@ USER_CREDENTIALS = {'username': '123', 'password': '123'}
 
 def fetch_slot_statuses():
     try:
-        # Reference to the 'slots' node in your Firebase Realtime Database
         slots_ref = db.reference('/slots')
-        # Fetch the data at the reference (returns a dictionary)
         slots_data = slots_ref.get()
         return slots_data
     except Exception as e:
@@ -58,7 +56,6 @@ def get_next_id(db_obj):
     return max(entry['id'] for entry in db_obj) + 1 if db_obj else 1
 
 def get_next_slot(db_obj, max_slots=MAX_SLOTS):
-    # Determine slots in use by entries with no exit_time and a defined slot
     used_slots = {entry.get("slot", 0) for entry in db_obj if entry.get("exit_time") is None and entry.get("slot") is not None}
     slot = 1
     while slot in used_slots and slot <= max_slots:
@@ -100,13 +97,55 @@ def log_registered_user(user_details, csv_file=REGISTERED_USERS_CSV):
         })
 
 # -----------------------------
+# External Camera Setup
+# -----------------------------
+# Load the Haar Cascade for face detection (if needed)
+f_cas = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+# External camera URL (you can change among cam-hi.jpg, cam-lo.jpg, etc.)
+CAM_URL = 'http://192.168.1.22/cam-hi.jpg'
+
+def gen_frames():
+    """Generator function that continuously fetches frames from the external camera,
+       optionally performs face detection, and yields a multipart JPEG stream."""
+    while True:
+        try:
+            # Fetch image data from the external camera URL
+            with urllib.request.urlopen(CAM_URL) as resp:
+                img_bytes = resp.read()
+            img_np = np.array(bytearray(img_bytes), dtype=np.uint8)
+            frame = cv2.imdecode(img_np, cv2.IMREAD_COLOR)
+            if frame is None:
+                continue
+
+            # Convert to grayscale for detection (optional)
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            faces = f_cas.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5)
+            for (x, y, w, h) in faces:
+                cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
+                
+            # Encode the frame in JPEG format
+            ret, buffer = cv2.imencode('.jpg', frame)
+            frame = buffer.tobytes()
+            # Yield frame in byte format for streaming
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+        except Exception as e:
+            print("Error fetching frame: ", e)
+            time.sleep(0.1)  # small delay before retrying
+
+@app.route('/video_feed')
+def video_feed():
+    # Streaming route. Put this in an <img src="{{ url_for('video_feed') }}"> tag.
+    return Response(gen_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+# -----------------------------
 # Global Database and Recognizer
 # -----------------------------
 face_db = load_database()
 recognizer = train_recognizer(face_db)
 
 # -----------------------------
-# Flask Routes
+# Flask Routes (Login, Home, Park, Register, Log Entry)
 # -----------------------------
 @app.route('/')
 def login():
@@ -143,6 +182,8 @@ def home():
 
 @app.route('/park')
 def park():
+    # Render the park page, which should include the live preview via an <img> tag
+    # that points to the video_feed endpoint.
     return render_template('park.html')
 
 @app.route('/register', methods=['GET', 'POST'])
@@ -185,7 +226,6 @@ def register():
         flash("Registration successful!")
         return redirect(url_for("home"))
 
-
 @app.route('/log_entry', methods=['POST'])
 def log_entry():
     global recognizer  # Use global recognizer
@@ -220,7 +260,7 @@ def log_entry():
         flash("User not found in the database!")
         return redirect(url_for("park"))
 
-    # Determine slot:
+    # Determine slot: use provided slot or get next available slot
     if selected_slot:
         slot = int(selected_slot)
     else:
@@ -231,7 +271,6 @@ def log_entry():
 
     current_time = time.strftime("%Y-%m-%d %H:%M:%S")
 
-    # Helper function: get the last event for this user from the CSV log.
     def get_last_event_for_user(user_id):
         if os.path.exists(EVENT_CSV_FILE):
             with open(EVENT_CSV_FILE, newline="") as csvfile:
@@ -245,12 +284,11 @@ def log_entry():
             return None
 
     last_event = get_last_event_for_user(user["id"])
-    if last_event and last_event["event_type"] == "entry":
+    if last_event and last_event["event_type"].lower() == "entry":
         new_event_type = "exit"
     else:
         new_event_type = "entry"
 
-    # Log the event in the CSV file.
     log_event({
         "id": user["id"],
         "name": user["name"],
@@ -262,23 +300,19 @@ def log_entry():
         "event_time": current_time
     })
 
-    # Update the slot status in Firebase
     try:
         slots_ref = db.reference('/slots')
         if new_event_type == "entry":
-            # Mark the slot as booked.
+            # Update the slot status directly (flat structure) to "1"
             slots_ref.update({f'slot{slot}': "1"})
-            # slots_ref.child(f'slot{slot}').update({"status": "booked"})
         else:
-            # Mark the slot as available (0).
+            # Mark the slot as available ("0")
             slots_ref.update({f'slot{slot}': "0"})
-            # slots_ref.child(f'slot{slot}').update({"status": "0"})
     except Exception as e:
         flash(f"Failed to update slot status in Firebase: {e}")
 
     flash(f"{new_event_type.capitalize()} logged for {user['name']} at slot {slot}!")
     return redirect(url_for("home"))
-
 
 if __name__ == '__main__':
     app.run(debug=True)

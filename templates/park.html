@@ -13,48 +13,39 @@
             border-radius: 5px;
             cursor: pointer;
         }
-        video {
+        #videoPreview {
+            width: 640px;
+            height: 480px;
             border: 1px solid #ccc;
         }
     </style>
 </head>
 <body>
     <h1>Parking Entry</h1>
-    <video id="video" width="640" height="480" autoplay></video>
-    <canvas id="canvas" width="640" height="480" style="display: none;"></canvas>
+    <!-- Live preview from the external camera -->
+    <img id="videoPreview" src="{{ url_for('video_feed') }}" alt="Live Camera Feed">
     <br><br>
     <button class="green-button" id="logEntryBtn">Log Entry</button>
-
+    <!-- Hidden canvas for capturing the current frame -->
+    <canvas id="canvas" width="640" height="480" style="display: none;"></canvas>
+    
     <script>
         // Retrieve the 'slot' parameter from the URL query string.
         const urlParams = new URLSearchParams(window.location.search);
         const slotNumber = urlParams.get("slot") || "";
-
-        const video = document.getElementById('video');
-        const canvas = document.getElementById('canvas');
         const logEntryBtn = document.getElementById('logEntryBtn');
+        const videoPreview = document.getElementById('videoPreview');
 
-        // Request access to the webcam.
-        navigator.mediaDevices.getUserMedia({ video: true })
-            .then(function(stream) {
-                video.srcObject = stream;
-                video.play();
-            })
-            .catch(function(err) {
-                console.error("Error accessing the camera: " + err);
-            });
-
-        logEntryBtn.addEventListener('click', function() {
-            // Capture the current frame from the video stream.
+        // Function to capture the current frame from the external camera feed preview.
+        function captureFrame() {
+            const canvas = document.getElementById('canvas');
             const context = canvas.getContext('2d');
-            context.drawImage(video, 0, 0, canvas.width, canvas.height);
-            
-            // Get the image as a base64 encoded string (JPEG).
+            // Draw the image from the <img> tag (live preview) onto the canvas.
+            context.drawImage(videoPreview, 0, 0, canvas.width, canvas.height);
             const dataURL = canvas.toDataURL('image/jpeg');
-            // Remove the data URL prefix to get just the Base64 encoded string.
             const base64Image = dataURL.replace(/^data:image\/jpeg;base64,/, "");
-            
-            // Send the captured image and the selected slot number to the server.
+
+            // Send the captured image and slot number to the server.
             fetch('/log_entry', {
                 method: 'POST',
                 headers: {
@@ -75,7 +66,9 @@
             .catch(error => {
                 console.error('Error:', error);
             });
-        });
+        }
+
+        logEntryBtn.addEventListener('click', captureFrame);
     </script>
 </body>
 </html>

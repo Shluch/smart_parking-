@@ -4,7 +4,7 @@ import numpy as np
 
 f_cas = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
 # eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_eye.xml')
-url = 'http://192.168.1.16/cam-hi.jpg'
+url = 'http://192.168.1.22/cam-hi.jpg'
 ##'''cam.bmp / cam-lo.jpg /cam-hi.jpg / cam.mjpeg '''
 cv2.namedWindow("Webdroid Live", cv2.WINDOW_AUTOSIZE)
 
@@ -12,7 +12,7 @@ while True:
     img_resp = urllib.request.urlopen(url)
     imgnp = np.array(bytearray(img_resp.read()), dtype=np.uint8)
     img = cv2.imdecode(imgnp, 1)
-    img = cv2.flip(img, -1)
+    # img = cv2.flip(img, -1)
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     face = f_cas.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5)
