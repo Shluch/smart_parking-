@@ -40,7 +40,6 @@
         function captureFrame() {
             const canvas = document.getElementById('canvas');
             const context = canvas.getContext('2d');
-            // Draw the image from the <img> tag (live preview) onto the canvas.
             context.drawImage(videoPreview, 0, 0, canvas.width, canvas.height);
             const dataURL = canvas.toDataURL('image/jpeg');
             const base64Image = dataURL.replace(/^data:image\/jpeg;base64,/, "");
@@ -54,17 +53,18 @@
                 body: 'face_data=' + encodeURIComponent(base64Image) +
                       '&slot=' + encodeURIComponent(slotNumber)
             })
-            .then(response => {
-                if (response.redirected) {
-                    window.location.href = response.url;
-                }
-                return response.text();
-            })
+            .then(response => response.json())
             .then(data => {
-                console.log(data);
+                if (data.status === "success") {
+                    // After a successful entry, redirect to home.html.
+                    window.location.href = "{{ url_for('home') }}";
+                } else {
+                    alert(data.message);
+                }
             })
             .catch(error => {
                 console.error('Error:', error);
+                alert("An error occurred during entry.");
             });
         }
 

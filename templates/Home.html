@@ -146,21 +146,26 @@
 			  <script>
 				const parkUrl = "{{ url_for('park') }}";
 			  </script>
-			      <script>
-					document.addEventListener("DOMContentLoaded", function() {
-						const slots = document.querySelectorAll('.slot');
-						slots.forEach(slot => {
-							slot.addEventListener('click', function() {
-								if (this.classList.contains('available')) {
-									const slotNumber = this.id.replace('slot', '');
-									window.location.href = `/park?slot=${slotNumber}`;
-								} else {
-									alert("This slot is already booked.");
-								}
-							});
-						});
-					});
-				</script>
+<script>
+	document.addEventListener("DOMContentLoaded", function() {
+	  const slots = document.querySelectorAll('.slot');
+	  slots.forEach(slot => {
+		slot.addEventListener('click', function() {
+		  let slotNumber = this.id;
+		  if (slotNumber.startsWith("slot")) {
+			slotNumber = slotNumber.replace("slot", "");
+		  }
+		  if (this.classList.contains('available')) {
+			window.location.href = `/park?slot=${slotNumber}`;
+		  } else if (this.classList.contains('booked')) {
+			// Redirect to exit route if slot is booked (red)
+			window.location.href = `/exit?slot=${slotNumber}`;
+		  }
+		});
+	  });
+	});
+  </script>
+  
 			  <!-- Include the JS that creates the 20 slots -->
 			  <!-- <script src="{{ url_for('static', filename='js/sloth.js') }}"></script> -->
 			   </body>

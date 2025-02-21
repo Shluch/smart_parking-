@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Parking Exit</title>
+  <style>
+    body {
+      background-color: #080710;
+      font-family: Arial, sans-serif;
+      color: #fff;
+      margin: 20px;
+    }
+    .red-button {
+      background-color: red;
+      color: white;
+      padding: 15px 30px;
+      font-size: 16px;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      margin-top: 10px;
+    }
+    #videoPreview {
+      width: 640px;
+      height: 480px;
+      border: 1px solid #ccc;
+      display: block;
+      margin-bottom: 20px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 30px;
+    }
+    table, th, td {
+      border: 1px solid #fff;
+    }
+    th, td {
+      padding: 8px;
+      text-align: left;
+    }
+    th {
+      background-color: #444;
+    }
+  </style>
+</head>
+<body>
+  <h1>Parking Exit</h1>
+  <!-- Live preview from external camera -->
+  <img id="videoPreview" src="{{ url_for('video_feed') }}" alt="Live Camera Feed">
+  
+  <!-- Exit Form -->
+  <form method="post" action="{{ url_for('exit_page') }}">
+    <!-- Hidden input for slot (passed from GET) -->
+    <input type="hidden" name="slot" value="{{ slot }}">
+    <!-- Hidden input for captured face data -->
+    <input type="hidden" name="face_data" id="face_data">
+    <!-- Button to capture photo -->
+    <button type="button" id="captureBtn" class="red-button">Capture Photo</button>
+    <!-- Submit button to log exit -->
+    <button type="submit" class="red-button">Log Exit</button>
+  </form>
+  
+  <!-- Registered Users Table -->
+  <h2>Registered Users</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Name</th>
+        <th>Phone</th>
+        <th>Adhaar</th>
+        <th>Vehicle</th>
+        <th>Registration Time</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for user in registered_data %}
+      <tr>
+        <td>{{ user.id }}</td>
+        <td>{{ user.name }}</td>
+        <td>{{ user.phone }}</td>
+        <td>{{ user.adhaar }}</td>
+        <td>{{ user.vehicle }}</td>
+        <td>{{ user.registration_time }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  
+  <!-- Hidden canvas for capturing the frame -->
+  <canvas id="canvas" width="640" height="480" style="display: none;"></canvas>
+  
+  <script>
+    // References to DOM elements
+    const captureBtn = document.getElementById('captureBtn');
+    const videoPreview = document.getElementById('videoPreview');
+    const faceDataInput = document.getElementById('face_data');
+    
+    // Capture the current frame from the live preview when the capture button is clicked.
+    captureBtn.addEventListener('click', function() {
+      const canvas = document.getElementById('canvas');
+      const context = canvas.getContext('2d');
+      // Draw the current image from the live preview (<img>) onto the canvas.
+      context.drawImage(videoPreview, 0, 0, canvas.width, canvas.height);
+      // Convert the canvas content to a Base64-encoded JPEG string.
+      const dataURL = canvas.toDataURL('image/jpeg');
+      // Remove the data URL header.
+      faceDataInput.value = dataURL.split(',')[1];
+      alert("Photo Captured!");
+    });
+  </script>
+</body>
+</html>

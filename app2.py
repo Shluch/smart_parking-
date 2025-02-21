@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, Response
+from flask import Flask, render_template, request, redirect, url_for, flash, Response, jsonify
 import cv2
 import numpy as np
 import pickle
@@ -96,46 +96,47 @@ def log_registered_user(user_details, csv_file=REGISTERED_USERS_CSV):
             "registration_time": user_details.get("entry_time") if user_details.get("entry_time") else time.strftime("%Y-%m-%d %H:%M:%S")
         })
 
+def get_last_entry_event_for_slot(slot):
+    if os.path.exists(EVENT_CSV_FILE):
+        with open(EVENT_CSV_FILE, newline="") as csvfile:
+            reader = csv.DictReader(csvfile)
+            last_event = None
+            for row in reader:
+                if str(row.get("slot")) == str(slot) and row.get("event_type", "").lower() == "entry":
+                    last_event = row
+            return last_event
+    return None
+
 # -----------------------------
 # External Camera Setup
 # -----------------------------
-# Load the Haar Cascade for face detection (if needed)
 f_cas = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-# External camera URL (you can change among cam-hi.jpg, cam-lo.jpg, etc.)
-CAM_URL = 'http://192.168.1.22/cam-hi.jpg'
+CAM_URL = 'http://192.168.1.23/cam-hi.jpg'  # Change to your camera URL if needed
 
 def gen_frames():
-    """Generator function that continuously fetches frames from the external camera,
-       optionally performs face detection, and yields a multipart JPEG stream."""
+    """Generator function that continuously fetches frames from the external camera."""
     while True:
         try:
-            # Fetch image data from the external camera URL
             with urllib.request.urlopen(CAM_URL) as resp:
                 img_bytes = resp.read()
             img_np = np.array(bytearray(img_bytes), dtype=np.uint8)
             frame = cv2.imdecode(img_np, cv2.IMREAD_COLOR)
             if frame is None:
                 continue
-
-            # Convert to grayscale for detection (optional)
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             faces = f_cas.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5)
             for (x, y, w, h) in faces:
                 cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
-                
-            # Encode the frame in JPEG format
             ret, buffer = cv2.imencode('.jpg', frame)
             frame = buffer.tobytes()
-            # Yield frame in byte format for streaming
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
         except Exception as e:
             print("Error fetching frame: ", e)
-            time.sleep(0.1)  # small delay before retrying
+            time.sleep(0.1)
 
 @app.route('/video_feed')
 def video_feed():
-    # Streaming route. Put this in an <img src="{{ url_for('video_feed') }}"> tag.
     return Response(gen_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 # -----------------------------
@@ -145,7 +146,7 @@ face_db = load_database()
 recognizer = train_recognizer(face_db)
 
 # -----------------------------
-# Flask Routes (Login, Home, Park, Register, Log Entry)
+# Flask Routes (Login, Home, Park, Register, Log Entry, Exit)
 # -----------------------------
 @app.route('/')
 def login():
@@ -161,7 +162,6 @@ def login_post():
 
 @app.route('/home')
 def home():
-    # Read event CSV data
     slot_statuses = fetch_slot_statuses()
     event_data = []
     if os.path.exists(EVENT_CSV_FILE):
@@ -169,21 +169,16 @@ def home():
             reader = csv.DictReader(csvfile)
             for row in reader:
                 event_data.append(row)
-
-    # Read registered users CSV data
     registered_data = []
     if os.path.exists(REGISTERED_USERS_CSV):
         with open(REGISTERED_USERS_CSV, newline="") as csvfile:
             reader = csv.DictReader(csvfile)
             for row in reader:
                 registered_data.append(row)
-
     return render_template("home.html", event_data=event_data, registered_data=registered_data, slot_statuses=slot_statuses)
 
 @app.route('/park')
 def park():
-    # Render the park page, which should include the live preview via an <img> tag
-    # that points to the video_feed endpoint.
     return render_template('park.html')
 
 @app.route('/register', methods=['GET', 'POST'])
@@ -196,11 +191,9 @@ def register():
         adhaar = request.form.get("adhaar")
         vehicle = request.form.get("vehicle")
         face_data = request.form.get("face_data")
-        
         if not (name and phone and adhaar and vehicle and face_data):
             flash("All fields and face data are required!")
             return redirect(url_for("register"))
-        
         try:
             img_bytes = base64.b64decode(face_data)
             face_np = np.frombuffer(img_bytes, dtype=np.uint8)
@@ -208,7 +201,6 @@ def register():
         except Exception as e:
             flash(f"Error decoding face data: {e}")
             return redirect(url_for("register"))
-        
         new_user = {
             "id": get_next_id(face_db),
             "name": name,
@@ -217,7 +209,6 @@ def register():
             "vehicle": vehicle,
             "face": face_roi
         }
-        
         face_db.append(new_user)
         save_database(face_db)
         global recognizer
@@ -226,51 +217,147 @@ def register():
         flash("Registration successful!")
         return redirect(url_for("home"))
 
-@app.route('/log_entry', methods=['POST'])
-def log_entry():
-    global recognizer  # Use global recognizer
+# @app.route('/exit', methods=['GET', 'POST'])
+# def exit_page():
+    if request.method == 'GET':
+        slot = request.args.get("slot")
+        if not slot:
+            flash("No slot specified for exit.")
+            return redirect(url_for("home"))
+        return render_template('exit.html', slot=slot)
+    
     face_data = request.form.get("face_data")
-    selected_slot = request.form.get("slot")  # Slot chosen by the user (from park.html)
-
+    selected_slot = request.form.get("slot")
     if not face_data:
         flash("Face data is required!")
-        return redirect(url_for("park"))
-
+        return redirect(url_for("exit_page", slot=selected_slot))
     try:
         img_bytes = base64.b64decode(face_data)
         face_np = np.frombuffer(img_bytes, dtype=np.uint8)
         face_roi = cv2.imdecode(face_np, cv2.IMREAD_GRAYSCALE)
     except Exception as e:
         flash(f"Error decoding face data: {e}")
-        return redirect(url_for("park"))
-
+        return redirect(url_for("exit_page", slot=selected_slot))
     if recognizer is None:
         flash("Face recognizer is not trained!")
-        return redirect(url_for("park"))
-
-    # Recognize the face
+        return redirect(url_for("exit_page", slot=selected_slot))
     label, confidence = recognizer.predict(face_roi)
     if confidence > THRESHOLD:
         flash("Face not recognized. Please register first!")
-        return redirect(url_for("park"))
-
-    # Retrieve user from the local face database
+        return redirect(url_for("exit_page", slot=selected_slot))
     user = next((entry for entry in face_db if entry["id"] == label), None)
     if user is None:
         flash("User not found in the database!")
-        return redirect(url_for("park"))
+        return redirect(url_for("exit_page", slot=selected_slot))
+    current_time = time.strftime("%Y-%m-%d %H:%M:%S")
+    log_event({
+        "id": user["id"],
+        "name": user["name"],
+        "phone": user["phone"],
+        "adhaar": user["adhaar"],
+        "vehicle": user["vehicle"],
+        "slot": selected_slot,
+        "event_type": "exit",
+        "event_time": current_time
+    })
+    try:
+        slots_ref = db.reference('/slots')
+        slots_ref.update({f'slot{selected_slot}': "0"})
+    except Exception as e:
+        flash(f"Failed to update slot status in Firebase: {e}")
+    flash(f"Exit logged for {user['name']} at slot {selected_slot}!")
+    return render_template('exit.html', slot=selected_slot)
 
-    # Determine slot: use provided slot or get next available slot
+@app.route('/exit', methods=['GET', 'POST'])
+def exit_page():
+    if request.method == 'GET':
+        slot = request.args.get("slot")
+        if not slot:
+            flash("No slot specified for exit.")
+            return redirect(url_for("home"))
+        # Load registered users from CSV for display
+        registered_data = []
+        if os.path.exists(REGISTERED_USERS_CSV):
+            with open(REGISTERED_USERS_CSV, newline="") as csvfile:
+                reader = csv.DictReader(csvfile)
+                for row in reader:
+                    registered_data.append(row)
+        return render_template('exit.html', slot=slot, registered_data=registered_data)
+    else:
+        # POST: Process exit submission.
+        face_data = request.form.get("face_data")
+        selected_slot = request.form.get("slot")
+        if not face_data:
+            flash("Face data is required!")
+            return redirect(url_for("exit_page", slot=selected_slot))
+        try:
+            img_bytes = base64.b64decode(face_data)
+            face_np = np.frombuffer(img_bytes, dtype=np.uint8)
+            face_roi = cv2.imdecode(face_np, cv2.IMREAD_GRAYSCALE)
+        except Exception as e:
+            flash(f"Error decoding face data: {e}")
+            return redirect(url_for("exit_page", slot=selected_slot))
+        if recognizer is None:
+            flash("Face recognizer is not trained!")
+            return redirect(url_for("exit_page", slot=selected_slot))
+        label, confidence = recognizer.predict(face_roi)
+        if confidence > THRESHOLD:
+            flash("Face not recognized. Please register first!")
+            return redirect(url_for("exit_page", slot=selected_slot))
+        user = next((entry for entry in face_db if entry["id"] == label), None)
+        if user is None:
+            flash("User not found in the database!")
+            return redirect(url_for("exit_page", slot=selected_slot))
+        current_time = time.strftime("%Y-%m-%d %H:%M:%S")
+        # Log the exit event.
+        log_event({
+            "id": user["id"],
+            "name": user["name"],
+            "phone": user["phone"],
+            "adhaar": user["adhaar"],
+            "vehicle": user["vehicle"],
+            "slot": selected_slot,
+            "event_type": "exit",
+            "event_time": current_time
+        })
+        # Update Firebase to mark the slot as available ("0")
+        try:
+            slots_ref = db.reference('/slots')
+            slots_ref.update({f'slot{selected_slot}': "0"})
+        except Exception as e:
+            flash(f"Failed to update slot status in Firebase: {e}")
+        flash(f"Exit logged for {user['name']} at slot {selected_slot}!")
+        return redirect(url_for("home"))
+
+@app.route('/log_entry', methods=['POST'])
+def log_entry():
+    global recognizer
+    face_data = request.form.get("face_data")
+    selected_slot = request.form.get("slot")
+    if not face_data:
+        return jsonify({"status": "error", "message": "Face data is required!"}), 400
+    try:
+        img_bytes = base64.b64decode(face_data)
+        face_np = np.frombuffer(img_bytes, dtype=np.uint8)
+        face_roi = cv2.imdecode(face_np, cv2.IMREAD_GRAYSCALE)
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Error decoding face data: {e}"}), 400
+    if recognizer is None:
+        return jsonify({"status": "error", "message": "Face recognizer is not trained!"}), 400
+    label, confidence = recognizer.predict(face_roi)
+    if confidence > THRESHOLD:
+        return jsonify({"status": "error", "message": "Face not recognized. Please register first!"}), 400
+    user = next((entry for entry in face_db if entry["id"] == label), None)
+    if user is None:
+        return jsonify({"status": "error", "message": "User not found in the database!"}), 400
     if selected_slot:
         slot = int(selected_slot)
     else:
         slot = get_next_slot(face_db)
         if slot is None:
-            flash("No available slot!")
-            return redirect(url_for("park"))
-
+            return jsonify({"status": "error", "message": "No available slot!"}), 400
     current_time = time.strftime("%Y-%m-%d %H:%M:%S")
-
+    # Determine the last event for this user to decide entry or exit
     def get_last_event_for_user(user_id):
         if os.path.exists(EVENT_CSV_FILE):
             with open(EVENT_CSV_FILE, newline="") as csvfile:
@@ -282,12 +369,16 @@ def log_entry():
                 return last_event
         else:
             return None
-
-    last_event = get_last_event_for_user(user["id"])
-    if last_event and last_event["event_type"].lower() == "entry":
-        new_event_type = "exit"
-    else:
-        new_event_type = "entry"
+    last_event_for_user = get_last_event_for_user(user["id"])
+    new_event_type = "exit" if last_event_for_user and last_event_for_user["event_type"].lower() == "entry" else "entry"
+    
+    # For exit events, ensure that the user exiting is the one who parked in that slot.
+    if new_event_type.lower() == "exit":
+        last_entry_event = get_last_entry_event_for_slot(slot)
+        if not last_entry_event:
+            return jsonify({"status": "error", "message": "No entry event found for this slot."}), 400
+        if str(last_entry_event["id"]) != str(user["id"]):
+            return jsonify({"status": "error", "message": f"Face does not match the user who parked in slot {slot}."}), 400
 
     log_event({
         "id": user["id"],
@@ -299,20 +390,28 @@ def log_entry():
         "event_type": new_event_type,
         "event_time": current_time
     })
-
     try:
         slots_ref = db.reference('/slots')
-        if new_event_type == "entry":
-            # Update the slot status directly (flat structure) to "1"
+        if new_event_type.lower() == "entry":
             slots_ref.update({f'slot{slot}': "1"})
         else:
-            # Mark the slot as available ("0")
             slots_ref.update({f'slot{slot}': "0"})
     except Exception as e:
-        flash(f"Failed to update slot status in Firebase: {e}")
-
-    flash(f"{new_event_type.capitalize()} logged for {user['name']} at slot {slot}!")
-    return redirect(url_for("home"))
+        return jsonify({"status": "error", "message": f"Failed to update slot status in Firebase: {e}"}), 500
+    response_data = {
+        "status": "success",
+        "user": {
+            "id": user["id"],
+            "name": user["name"],
+            "phone": user["phone"],
+            "adhaar": user["adhaar"],
+            "vehicle": user["vehicle"],
+            "slot": slot,
+            "event_type": new_event_type,
+            "event_time": current_time
+        }
+    }
+    return jsonify(response_data)
 
 if __name__ == '__main__':
     app.run(debug=True)
